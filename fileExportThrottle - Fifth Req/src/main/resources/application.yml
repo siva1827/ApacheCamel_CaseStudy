@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: fileExport
+
+camel:
+  component:
+    file:
+      target-dir: C:/export
+scheduler:
+  interval: 100000
+logging:
+  level:
+    org.apache.camel: DEBUG
+    com.UST.fileExport: DEBUG
+    org.springframework.data.mongodb: DEBUG
+    org.mongodb.driver: INFO
