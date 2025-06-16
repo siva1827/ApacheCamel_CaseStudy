@@ -54,6 +54,18 @@ public class ItemRoute extends RouteBuilder {
     public void configure() {
         logger.info("Configuring Camel routes for Item Service");
 
+        // Global exception handling for all routes
+        onException(InventoryValidationException.class)
+                .handled(true)
+                .bean(ErrorResponseProcessor.class, "processValidationError")
+                .log("Validation error: ${exception.message}")
+                .setHeader(Exchange.HTTP_RESPONSE_CODE, constant(400));
+
+        onException(MongoException.class)
+                .handled(true)
+                .log(LoggingLevel.WARN, "Action: ExceptionHandling | Type: System | MongoDB error occurred: ${exception.message}")
+                .process(new ErrorResponseProcessor())
+                .marshal().json(JsonLibrary.Jackson);
 
         onException(MongoTimeoutException.class, MongoSocketOpenException.class, MongoSocketReadException.class)
                 .maximumRedeliveries(mongoRetryMax)
@@ -66,40 +78,10 @@ public class ItemRoute extends RouteBuilder {
                 .process(new ErrorResponseProcessor())
                 .marshal().json(JsonLibrary.Jackson);
 
-//        onException(MongoException.class)
-//                .handled(true)
-//                .log(LoggingLevel.WARN, "Action: ExceptionHandling | Type: System | MongoDB error occurred: ${exception.message}")
-//                .process(new ErrorResponseProcessor())
-//                .marshal().json(JsonLibrary.Jackson);
-
-        // Exception handling for JMS errors
-        onException(UncategorizedJmsException.class, JMSException.class)
-                .handled(true)
-                .bean(AsyncInventoryUpdateProcessor.class, "handleException")
-                .stop()
-                .end();
-
-        // Global exception handling for all routes
-        onException(InventoryValidationException.class)
-                .handled(true)
-                .bean(ErrorResponseProcessor.class, "processValidationError")
-                .log("Validation error: ${exception.message}")
-                .setHeader(Exchange.HTTP_RESPONSE_CODE, constant(400));
-
-
-        // Exception Handling for Mongo Exception
-        onException(MongoException.class)
-                .handled(true)
-                .bean(ErrorResponseProcessor.class, "processMongoError")
-                .log("MongoDB error: ${exception.message}")
-                .setHeader(Exchange.HTTP_RESPONSE_CODE, constant(500));
-
-
-        // Exception Handler for Generic Errors
         onException(Throwable.class)
                 .handled(true)
                 .bean(ErrorResponseProcessor.class, "processGenericError")
-                .log("Unexpected error: ${exception.message} at ${exception.stacktrace}")
+                .log("Unexpected error: ${exception.message} ")
                 .setHeader(Exchange.HTTP_RESPONSE_CODE, constant(500));
 
         restConfiguration()
@@ -110,6 +92,7 @@ public class ItemRoute extends RouteBuilder {
                 .bindingMode(RestBindingMode.json)
                 .dataFormatProperty("json.in.disableFeatures", "FAIL_ON_UNKNOWN_PROPERTIES");
 
+        // GET item by itemId
         rest("/mycart/item/{itemId}")
                 .get()
                 .to(ApplicationConstants.DIRECT_PREFIX + ApplicationConstants.ENDPOINT_GET_ITEM_BY_ID);
@@ -130,12 +113,13 @@ public class ItemRoute extends RouteBuilder {
                 .choice()
                 .when(exchangeProperty("itemNotFound").isNull())
                 .bean(GetItemProcessor.class, "setCategoryId")
+                .setHeader("camelMongoDbFieldProjection", simple("{\"categoryName\": 1, \"_id\": 0}"))
                 .to(String.format(ApplicationConstants.MONGO_CATEGORY_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_CATEGORY_READ_COLLECTION))
                 .bean(GetItemProcessor.class, "processCategoryResult")
                 .endChoice();
 
-        //get items by categoryid
+        // GET items by categoryId
         rest("/mycart/items/{categoryId}")
                 .get()
                 .param()
@@ -162,6 +146,7 @@ public class ItemRoute extends RouteBuilder {
                 .bean(GetItemsByCategoryProcessor.class, "processResult")
                 .choice()
                 .when(exchangeProperty("fetchCategory").isEqualTo(true))
+                .setHeader("camelMongoDbFieldProjection", simple("{\"categoryName\": 1, \"_id\": 0}"))
                 .to(String.format(ApplicationConstants.MONGO_CATEGORY_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_CATEGORY_READ_COLLECTION))
                 .bean(GetItemsByCategoryProcessor.class, "processCategoryResult")
@@ -172,11 +157,11 @@ public class ItemRoute extends RouteBuilder {
                 .endChoice()
                 .bean(GetItemsByCategoryProcessor.class, "buildFinalResponse");
 
-        //post new item
+        // POST new item
         rest("/mycart")
                 .post()
                 .consumes("application/json")
-                .type(Item.class) // Ensure JSON is deserialized to Item
+                .type(Item.class)
                 .to(ApplicationConstants.DIRECT_PREFIX + ApplicationConstants.ENDPOINT_POST_NEW_ITEM);
 
         from(ApplicationConstants.DIRECT_PREFIX + ApplicationConstants.ENDPOINT_POST_NEW_ITEM)
@@ -196,6 +181,7 @@ public class ItemRoute extends RouteBuilder {
                 .bean(PostNewItemProcessor.class, "handleExistingItem")
                 .otherwise()
                 .bean(PostNewItemProcessor.class, "setCategoryId")
+                .setHeader("camelMongoDbFieldProjection", simple("{\"categoryName\": 1, \"_id\": 0}"))
                 .to(String.format(ApplicationConstants.MONGO_CATEGORY_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_CATEGORY_READ_COLLECTION))
                 .choice()
@@ -208,7 +194,6 @@ public class ItemRoute extends RouteBuilder {
                 .bean(PostNewItemProcessor.class, "handleInsertSuccess")
                 .endChoice()
                 .endChoice();
-
 
         // Route for sync update
         rest("/inventory/update")
@@ -267,10 +252,7 @@ public class ItemRoute extends RouteBuilder {
                 .bean(AsyncInventoryUpdateProcessor.class, "handleException")
                 .end();
 
-        //----------------------------------------------------------------------------------------------------
-
-
-        //post new Category
+        // POST new Category
         rest("/mycart/category")
                 .post()
                 .consumes("application/json")
@@ -292,7 +274,4 @@ public class ItemRoute extends RouteBuilder {
                 .otherwise()
                 .bean(PostNewCategoryProcessor.class, "handleExistingCategory");
     }
-
-
-
 }
