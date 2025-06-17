@@ -97,4 +97,27 @@ public class ControlRefProcessor implements Processor {
         exchange.getIn().setBody(controlRef);
         logger.info("Prepared ControlRef update for itemId: {}, lastProcessTs: {}", itemId, currentTs);
     }
+
+    public void prepareUpdate(Exchange exchange) {
+        Document controlRef = exchange.getIn().getBody(Document.class);
+        if (controlRef == null) {
+            logger.warn("ControlRef document is null, skipping update");
+            exchange.getIn().setBody(null);
+            return;
+        }
+
+        String itemId = exchange.getIn().getHeader("ControlRefId", String.class);
+        String currentTs = exchange.getProperty("currentTs", String.class);
+        if (itemId == null || currentTs == null) {
+            logger.warn("Missing itemId or currentTs, cannot prepare update: itemId={}, currentTs={}", itemId, currentTs);
+            exchange.getIn().setBody(null);
+            return;
+        }
+
+        Document query = new Document("_id", itemId);
+        Document update = new Document("$set", new Document("lastProcessTs", currentTs));
+        exchange.getIn().setBody(Arrays.asList(query, update));
+        exchange.getIn().setHeader("CamelMongoDbUpsert", true);
+        logger.debug("Prepared MongoDB update for itemId: {}, lastProcessTs: {}", itemId, currentTs);
+    }
 }

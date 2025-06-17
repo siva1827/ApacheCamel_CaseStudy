@@ -5,15 +5,21 @@ import org.apache.camel.Processor;
 import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
+@Component
 public class ControlRefProcessor implements Processor {
     private static final Logger logger = LoggerFactory.getLogger(ControlRefProcessor.class);
     private static final String OPERATION_HEADER = "ControlRefOperation";
-    private static final SimpleDateFormat FORMATTER = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private final SimpleDateFormat formatter;
+
+    public ControlRefProcessor() {
+        this.formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    }
 
     @Override
     public void process(Exchange exchange) throws Exception {
@@ -54,8 +60,8 @@ public class ControlRefProcessor implements Processor {
             String lastProcessTs = doc.getString("lastProcessTs");
             if (itemId != null && lastProcessTs != null) {
                 try {
-                    synchronized (FORMATTER) {
-                        Date lastProcessDate = FORMATTER.parse(lastProcessTs);
+                    synchronized (formatter) {
+                        Date lastProcessDate = formatter.parse(lastProcessTs);
                         controlRefMap.put(itemId, lastProcessDate);
                         logger.debug("Mapped ControlRef: itemId={}, lastProcessTs={}", itemId, lastProcessTs);
                     }
@@ -96,5 +102,28 @@ public class ControlRefProcessor implements Processor {
             .append("lastProcessTs", currentTs);
         exchange.getIn().setBody(controlRef);
         logger.info("Prepared ControlRef update for itemId: {}, lastProcessTs: {}", itemId, currentTs);
+    }
+
+    public void prepareUpdate(Exchange exchange) {
+        Document controlRef = exchange.getIn().getBody(Document.class);
+        if (controlRef == null) {
+            logger.warn("ControlRef document is null, skipping update");
+            exchange.getIn().setBody(null);
+            return;
+        }
+
+        String itemId = exchange.getIn().getHeader("ControlRefId", String.class);
+        String currentTs = exchange.getProperty("currentTs", String.class);
+        if (itemId == null || currentTs == null) {
+            logger.warn("Missing itemId or currentTs, cannot prepare update: itemId={}, currentTs={}", itemId, currentTs);
+            exchange.getIn().setBody(null);
+            return;
+        }
+
+        Document query = new Document("_id", itemId);
+        Document update = new Document("$set", new Document("lastProcessTs", currentTs));
+        exchange.getIn().setBody(Arrays.asList(query, update));
+        exchange.getIn().setHeader("CamelMongoDbUpsert", true);
+        logger.debug("Prepared MongoDB update for itemId: {}, lastProcessTs: {}", itemId, currentTs);
     }
 }

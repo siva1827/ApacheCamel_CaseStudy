@@ -6,6 +6,7 @@ import com.UST.ItemBridge.processor.ErrorResponseProcessor;
 import org.apache.camel.LoggingLevel;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.model.dataformat.JsonLibrary;
+import org.apache.camel.model.rest.RestBindingMode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -34,7 +35,7 @@ public class ItemFetchRoute extends RouteBuilder {
             .handled(true)
             .process(new ErrorResponseProcessor())
             .marshal().json(JsonLibrary.Jackson)
-            .to("file:C:/store/items?fileName=error-${header.itemId}.json");
+            .to(ApplicationConstants.FILE_PATH_ITEMS + "?fileName=error-${header.itemId}.json");
 
         // REST configuration
         restConfiguration()
@@ -42,33 +43,28 @@ public class ItemFetchRoute extends RouteBuilder {
                 .contextPath("/camel")
                 .host(ApplicationConstants.REST_HOST)
                 .port(ApplicationConstants.REST_PORT)
+//                .bindingMode(RestBindingMode.json)
+                .dataFormatProperty("json.in.disableFeatures", "FAIL_ON_UNKNOWN_PROPERTIES")
                 .apiProperty("api.title", "MyCart Item Fetch API")
                 .apiProperty("api.version", "1.0");
 
         // REST endpoint: GET /camel/mycart/fetch/item/{itemId}
         rest("/mycart/fetch/item")
                 .get("/{itemId}")
-                .routeId("RouteItemFetch")
-                .to("direct:fetchItem");
-
+                .routeId(ApplicationConstants.ROUTE_ITEM_FETCH)
+                .to(ApplicationConstants.DIRECT_PREFIX + ApplicationConstants.ROUTE_FETCH_ITEM);
 
         // Fetch item details
-        from("direct:fetchItem")
-            .routeId("fetchItem")
+        from(ApplicationConstants.DIRECT_PREFIX + ApplicationConstants.ROUTE_FETCH_ITEM)
+            .routeId(ApplicationConstants.ROUTE_FETCH_ITEM)
             .log(LoggingLevel.INFO, "Fetching item with ID: ${header.itemId}")
             .setHeader("CamelHttpMethod", constant("GET"))
             .setBody(simple("${header.itemId}"))
             .toD("http://localhost:8081/camel/mycart/item/${body}?bridgeEndpoint=true&throwExceptionOnFailure=false&preserveHostHeader=false")
             .unmarshal().json(JsonLibrary.Jackson, ItemResponse.class)
             .log(LoggingLevel.INFO, "Fetched item: ${body.itemName}, Category: ${body.categoryName}")
-            .marshal().json(JsonLibrary.Jackson)
-            .to("file:C:/store/items?fileName=item-${header.itemId}.json")
-            .log(LoggingLevel.INFO, "Saved item details to file: item-${header.itemId}.json");
-
-//        // Timer for testing
-//        from("timer:testFetch?repeatCount=1")
-//            .routeId("testFetch")
-//            .setHeader("itemId", constant("item6"))
-//            .to("direct:fetchItem");
+            .marshal().json(JsonLibrary.Jackson);
+//            .to(ApplicationConstants.FILE_PATH_ITEMS + "?fileName=item-${header.itemId}.json")
+//            .log(LoggingLevel.INFO, "Saved item details to file: item-${header.itemId}.json");
     }
 }

@@ -1,10 +1,13 @@
 package com.UST.Apache_Camel.route;
 
+import com.UST.Apache_Camel.bean.*;
 import com.UST.Apache_Camel.config.ApplicationConstants;
 import com.UST.Apache_Camel.exception.InventoryValidationException;
 import com.UST.Apache_Camel.model.Category;
 import com.UST.Apache_Camel.model.Item;
 import com.UST.Apache_Camel.processors.*;
+import com.UST.Apache_Camel.strategies.ItemAggregationStrategy;
+import com.UST.Apache_Camel.strategies.ItemResponseCatAggregationStrategy;
 import com.mongodb.MongoException;
 import com.mongodb.MongoSocketOpenException;
 import com.mongodb.MongoSocketReadException;
@@ -14,12 +17,10 @@ import org.apache.camel.LoggingLevel;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.model.dataformat.JsonLibrary;
 import org.apache.camel.model.rest.RestBindingMode;
-import org.apache.camel.model.rest.RestParamType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jms.UncategorizedJmsException;
 import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -106,17 +107,17 @@ public class ItemRoute extends RouteBuilder {
                 .log("Error fetching item: ${exception.message}")
                 .end()
                 .log("Fetching item with ID: ${header.itemId}")
-                .bean(GetItemProcessor.class, "setItemId")
+                .bean(GetItemBean.class, "setItemId")
                 .to(String.format(ApplicationConstants.MONGO_ITEM_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_ITEM_READ_COLLECTION))
-                .bean(GetItemProcessor.class, "processResult")
+                .bean(GetItemBean.class, "processResult")
                 .choice()
                 .when(exchangeProperty("itemNotFound").isNull())
-                .bean(GetItemProcessor.class, "setCategoryId")
+                .bean(GetItemBean.class, "setCategoryId")
                 .setHeader("camelMongoDbFieldProjection", simple("{\"categoryName\": 1, \"_id\": 0}"))
                 .to(String.format(ApplicationConstants.MONGO_CATEGORY_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_CATEGORY_READ_COLLECTION))
-                .bean(GetItemProcessor.class, "processCategoryResult")
+                .bean(GetItemBean.class, "processCategoryResult")
                 .endChoice();
 
         // GET items by categoryId
@@ -140,22 +141,22 @@ public class ItemRoute extends RouteBuilder {
                 .log("Error fetching items: ${exception.message}")
                 .end()
                 .log("Fetching items for categoryId: ${header.categoryId}")
-                .bean(GetItemsByCategoryProcessor.class, "buildAggregationPipeline")
+                .bean(GetItemsByCategoryBean.class, "buildAggregationPipeline")
                 .to(String.format(ApplicationConstants.MONGO_ITEM_AGGREGATE,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_ITEM_READ_COLLECTION))
-                .bean(GetItemsByCategoryProcessor.class, "processResult")
+                .bean(GetItemsByCategoryBean.class, "processResult")
                 .choice()
                 .when(exchangeProperty("fetchCategory").isEqualTo(true))
                 .setHeader("camelMongoDbFieldProjection", simple("{\"categoryName\": 1, \"_id\": 0}"))
                 .to(String.format(ApplicationConstants.MONGO_CATEGORY_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_CATEGORY_READ_COLLECTION))
-                .bean(GetItemsByCategoryProcessor.class, "processCategoryResult")
+                .bean(GetItemsByCategoryBean.class, "processCategoryResult")
                 .otherwise()
                 .split(body()).aggregationStrategy(new ItemResponseCatAggregationStrategy())
-                .bean(GetItemsByCategoryProcessor.class, "transformItem")
+                .bean(GetItemsByCategoryBean.class, "transformItem")
                 .end()
                 .endChoice()
-                .bean(GetItemsByCategoryProcessor.class, "buildFinalResponse");
+                .bean(GetItemsByCategoryBean.class, "buildFinalResponse");
 
         // POST new item
         rest("/mycart")
@@ -173,25 +174,25 @@ public class ItemRoute extends RouteBuilder {
                 .log("Validation error: ${exception.message}")
                 .end()
                 .log("Received new item: ${body}")
-                .bean(PostNewItemProcessor.class, "validateItem")
+                .bean(PostNewItemBean.class, "validateItem")
                 .to(String.format(ApplicationConstants.MONGO_ITEM_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_ITEM_READ_COLLECTION))
                 .choice()
                 .when(body().isNotNull())
-                .bean(PostNewItemProcessor.class, "handleExistingItem")
+                .bean(PostNewItemBean.class, "handleExistingItem")
                 .otherwise()
-                .bean(PostNewItemProcessor.class, "setCategoryId")
+                .bean(PostNewItemBean.class, "setCategoryId")
                 .setHeader("camelMongoDbFieldProjection", simple("{\"categoryName\": 1, \"_id\": 0}"))
                 .to(String.format(ApplicationConstants.MONGO_CATEGORY_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_CATEGORY_READ_COLLECTION))
                 .choice()
                 .when(body().isNull())
-                .bean(PostNewItemProcessor.class, "handleInvalidCategory")
+                .bean(PostNewItemBean.class, "handleInvalidCategory")
                 .otherwise()
-                .bean(PostNewItemProcessor.class, "prepareItemForInsert")
+                .bean(PostNewItemBean.class, "prepareItemForInsert")
                 .to(String.format(ApplicationConstants.MONGO_ITEM_INSERT,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_ITEM_WRITE_COLLECTION))
-                .bean(PostNewItemProcessor.class, "handleInsertSuccess")
+                .bean(PostNewItemBean.class, "handleInsertSuccess")
                 .endChoice()
                 .endChoice();
 
@@ -214,16 +215,16 @@ public class ItemRoute extends RouteBuilder {
                 .aggregationStrategy(new ItemAggregationStrategy())
                 .streaming()
                 .doTry()
-                .bean(ItemProcessor.class, "processItem")
-                .bean(ItemProcessor.class, "setItemId")
+                .bean(ItemBean.class, "processItem")
+                .bean(ItemBean.class, "setItemId")
                 .to(String.format(ApplicationConstants.MONGO_ITEM_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_ITEM_READ_COLLECTION))
-                .bean(ItemProcessor.class, "validateAndUpdateItem")
+                .bean(ItemBean.class, "validateAndUpdateItem")
                 .to(String.format(ApplicationConstants.MONGO_ITEM_SAVE,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_ITEM_WRITE_COLLECTION))
-                .bean(ItemProcessor.class, "markSuccess")
+                .bean(ItemBean.class, "markSuccess")
                 .doCatch(InventoryValidationException.class)
-                .bean(ItemProcessor.class, "markFailure")
+                .bean(ItemBean.class, "markFailure")
                 .end()
                 .log("Completed processing item ${exchangeProperty.itemId}, itemResult: ${exchangeProperty.itemResult}")
                 .end()
@@ -240,16 +241,16 @@ public class ItemRoute extends RouteBuilder {
                 .routeId(ApplicationConstants.ROUTE_ASYNC_INVENTORY_UPDATE)
                 .doTry()
                 .bean(PayloadValidationProcessor.class)
-                .bean(AsyncInventoryUpdateProcessor.class, "initializeCorrelationId")
-                .bean(AsyncInventoryUpdateProcessor.class, "prepareQueueMessage")
+                .bean(AsyncInventoryUpdateBean.class, "initializeCorrelationId")
+                .bean(AsyncInventoryUpdateBean.class, "prepareQueueMessage")
                 .log("Sending item list to ActiveMQ queue: ${header.JMSCorrelationID}")
                 .to(String.format(ApplicationConstants.AMQ_INVENTORY_UPDATE_WRITE,
                         ApplicationConstants.AMQ_INVENTORY_UPDATE_WRITE_QUEUE))
-                .bean(AsyncInventoryUpdateProcessor.class, "buildEnqueueResponse")
+                .bean(AsyncInventoryUpdateBean.class, "buildEnqueueResponse")
                 .doCatch(InventoryValidationException.class, JMSException.class)
-                .bean(AsyncInventoryUpdateProcessor.class, "handleException")
+                .bean(AsyncInventoryUpdateBean.class, "handleException")
                 .doCatch(Exception.class)
-                .bean(AsyncInventoryUpdateProcessor.class, "handleException")
+                .bean(AsyncInventoryUpdateBean.class, "handleException")
                 .end();
 
         // POST new Category
@@ -262,16 +263,16 @@ public class ItemRoute extends RouteBuilder {
         from(ApplicationConstants.DIRECT_PREFIX + ApplicationConstants.ENDPOINT_POST_NEW_CATEGORY)
                 .routeId(ApplicationConstants.ROUTE_POST_NEW_CATEGORY)
                 .log("Received new category: ${body}")
-                .bean(PostNewCategoryProcessor.class, "validateCategory")
+                .bean(PostNewCategoryBean.class, "validateCategory")
                 .to(String.format(ApplicationConstants.MONGO_CATEGORY_FIND_BY_ID,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_CATEGORY_READ_COLLECTION))
                 .choice()
                 .when(body().isNull())
-                .bean(PostNewCategoryProcessor.class, "prepareCategoryForInsert")
+                .bean(PostNewCategoryBean.class, "prepareCategoryForInsert")
                 .to(String.format(ApplicationConstants.MONGO_CATEGORY_INSERT,
                         ApplicationConstants.MONGO_DATABASE, ApplicationConstants.MONGO_CATEGORY_WRITE_COLLECTION))
-                .bean(PostNewCategoryProcessor.class, "handleInsertSuccess")
+                .bean(PostNewCategoryBean.class, "handleInsertSuccess")
                 .otherwise()
-                .bean(PostNewCategoryProcessor.class, "handleExistingCategory");
+                .bean(PostNewCategoryBean.class, "handleExistingCategory");
     }
 }
